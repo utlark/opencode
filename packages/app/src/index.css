@@ -44,6 +44,30 @@
     visibility: hidden;
   }
 
+  /* The base handle's 3px line has no color, so it is invisible over the panel. Give the
+     column handle a resting tint so the affordance is discoverable, and brighten it on
+     hover/focus. */
+  [data-slot="session-chat-panel"] .session-column-handle::after {
+    background: var(--color-v2-border-border-base);
+    opacity: 0.5;
+  }
+
+  /* `opacity: 1` matters for `:focus-visible`: the base rule only lifts it on hover/active, so
+     keyboard focus would otherwise keep the line invisible. */
+  [data-slot="session-chat-panel"] .session-column-handle:hover::after,
+  [data-slot="session-chat-panel"] .session-column-handle:active::after,
+  [data-slot="session-chat-panel"] .session-column-handle:focus-visible::after {
+    background: var(--color-v2-border-border-strong);
+    opacity: 1;
+  }
+
+  /* `text-wrap-style: pretty` is expensive to recompute; while the column (or the panel) is
+     being resized the text reflows every frame, so fall back to greedy wrapping for the drag
+     and let the pretty breaks settle when it ends. */
+  [data-slot="session-chat-panel"][data-column-resizing] {
+    text-wrap-style: auto;
+  }
+
   [data-slot="session-side-panel-presence"][data-opened="true"] {
     animation: side-region-presence-in 240ms cubic-bezier(0.22, 1, 0.36, 1);
   }

@@ -53,6 +53,29 @@ export function createSessionScreenLayout(
     }),
   )
 
+  // When the side region opens, expand the chat to its max so the side is left its minimum
+  // width; a saved narrow chat width would otherwise leave the side most of a wide screen.
+  // The layout is shared across routed sessions, so only an open (or first-measure) transition
+  // within one session triggers this - a tab switch must not clobber that tab's saved width -
+  // and only an expansion is written: a saved width above the max is already clamped for
+  // display, so overwriting it would lose the user's value on wider screens.
+  createEffect(
+    (previous: { key: string; open: boolean; measured: boolean } | undefined) => {
+      const key = session.identity.sessionKey()
+      const open = resizable()
+      const width = available()
+      const measured = width !== undefined
+
+      if (previous?.key === key && open && measured && (!previous.open || !previous.measured)) {
+        const max = sessionPanelWidthMax({ available: width, split: splitSide() })
+
+        if (view().session.width() < max) view().session.resize(max)
+      }
+
+      return { key, open, measured }
+    },
+  )
+
   const panelWidth = createMemo(() => {
     if (!besideOpen()) return "100%"
 

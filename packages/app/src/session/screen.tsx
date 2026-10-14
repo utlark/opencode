@@ -11,6 +11,7 @@ import {
   type Accessor,
 } from "solid-js"
 import { createStore } from "solid-js/store"
+import { createResizeObserver } from "@solid-primitives/resize-observer"
 import { ResizeHandle } from "@opencode/ui/resize-handle"
 import { Slot, type BackgroundTask, type MountedSession, type SessionScreen } from "@opencode/gui-extensions/sdk"
 import { MessageTimeline } from "@/session/timeline/message-timeline"
@@ -18,6 +19,7 @@ import { ComposerDropzone } from "@/composer/dropzone"
 import { useSettings } from "@/settings/model"
 import type { SessionModel } from "@/session/model"
 import { SESSION_PANEL_WIDTH_MIN } from "@/session/session-panel-width"
+import { SESSION_COLUMN_WIDTH_MIN, useSessionColumnWidth } from "./session-column-width"
 import { SessionPanelFrame } from "@/session/session-frame"
 import { useExtensionHost } from "@/runtime/extension/host"
 import { ExtensionLinks } from "@/runtime/extension/render"
@@ -38,6 +40,10 @@ import { SessionReviewToggle } from "./header/session-header-actions"
 import { SessionRunningMenu } from "./header/session-running-menu"
 import { createAnimatedPresence } from "@/runtime/animated-presence"
 import { createTimelineCache } from "./timeline/cache"
+
+// The narrowest panel that still shows the column handle: a min-width column must leave 48px of
+// panel on each side, so the handle straddling the column's edge has room.
+const COLUMN_HANDLE_MIN_PANEL_WIDTH = SESSION_COLUMN_WIDTH_MIN + 48 * 2
 
 export function SessionScreenView(props: { session: SessionModel }) {
   // The timeline cache captures its owner when created, so link handling must be provided above it.
@@ -84,6 +90,34 @@ function SessionScreenContent(props: {
     wide: region.wide,
     sidebar: () => host.items(Slot).some((item) => item.value.at === "session.panel.sidebar"),
   })
+
+  const column = useSessionColumnWidth()
+
+  // Two measured widths: the panel's (the drag's max) and the centered column's own box
+  // (the drag's start value in "auto" mode).
+  let columnPanel: HTMLDivElement | undefined
+  let columnBox: HTMLDivElement | undefined
+  const [columnPanelSize, setColumnPanelSize] = createStore<{ width: number }>({ width: 0 })
+  const [columnBoxSize, setColumnBoxSize] = createStore<{ width: number }>({ width: 0 })
+  createResizeObserver(
+    () => columnPanel,
+    ({ width }) => setColumnPanelSize({ width }),
+  )
+  createResizeObserver(
+    () => columnBox,
+    ({ width }) => setColumnBoxSize({ width }),
+  )
+
+  const columnMax = createMemo(() => columnPanelSize.width)
+  // A stored width wider than the panel renders clamped (`max-width`), so the handle, its ARIA
+  // value and the drag seed all start from the rendered width, not the stored one.
+  const columnDisplayWidth = createMemo(() => Math.min(column.width() ?? columnBoxSize.width, columnMax()))
+
+  // The wrapping `Show` already gates on `isDesktop()`; only the measured width is checked here.
+  const columnHandleVisible = createMemo(() => columnPanelSize.width >= COLUMN_HANDLE_MIN_PANEL_WIDTH)
+
+  // The width at the moment the drag started; the 2x mapping in `onResize` is relative to it.
+  let columnDragStart: number | undefined
 
   const timeline = createSessionTimelineInteraction(session)
 
@@ -397,12 +431,85 @@ function SessionScreenContent(props: {
             onTransitionRun={trackSideWidthMotion}
             onTransitionEnd={trackSideWidthMotion}
             onTransitionCancel={trackSideWidthMotion}
-            style={{ width: screen.panel.width() }}
+            data-column-resizing={screen.size.active() || undefined}
+            style={{
+              width: screen.panel.width(),
+              // A user-chosen column width cascades to every `max-w-session` in this panel
+              // (timeline, composer, drop target), keeping their edges aligned.
+              "--container-session": column.width() === undefined ? undefined : `${column.width()}px`,
+            }}
           >
             <Show when={!!session.identity.params.id}>
               <SessionPanelFrame raised>
                 <ErrorBoundary fallback={sessionErrorFallback}>{sessionPanelContent()}</ErrorBoundary>
               </SessionPanelFrame>
+            </Show>
+
+            {/* The inner div is the centered column's own box (same `--container-session` and
+                `mx-auto`), so its end edge is the column's right edge at every height. */}
+            <Show when={isDesktop() && !!session.identity.params.id}>
+              {/* No z-index: at full column width this handle shares the panel's edge with the
+                  divider, whose z-10 must win the overlapping strip (equal z falls to DOM order). */}
+              <div
+                ref={(element) => {
+                  columnPanel = element
+                }}
+                class="pointer-events-none absolute inset-0"
+              >
+                <div
+                  ref={(element) => {
+                    columnBox = element
+                  }}
+                  class="relative mx-auto h-full md:max-w-session"
+                >
+                  <Show when={columnHandleVisible()}>
+                    {/* `size.start()` keeps width transitions off while dragging, as for the
+                        panel divider; it also drives `data-column-resizing` above. */}
+                    <ResizeHandle
+                      class="session-column-handle pointer-events-auto focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-v2-border-border-focus"
+                      direction="horizontal"
+                      edge="end"
+                      size={columnDisplayWidth()}
+                      min={SESSION_COLUMN_WIDTH_MIN}
+                      max={columnMax()}
+                      title="Resize column width; double-click to toggle full/auto"
+                      role="separator"
+                      aria-orientation="vertical"
+                      aria-valuenow={columnDisplayWidth()}
+                      aria-valuemin={SESSION_COLUMN_WIDTH_MIN}
+                      aria-valuemax={columnMax()}
+                      tabindex={0}
+                      onPointerDown={() => {
+                        columnDragStart = columnDisplayWidth()
+                        screen.size.start()
+                      }}
+                      onDblClick={() => {
+                        // Jump between the panel's full width and the design column; the 8px
+                        // tolerance matches the drag's clamp, so a full-width column toggles off.
+                        const width = column.width()
+
+                        if (width !== undefined && width >= columnMax() - 8) column.reset()
+                        else column.set(columnMax())
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return
+                        event.preventDefault()
+                        const step = event.shiftKey ? 64 : 16
+                        const next = columnDisplayWidth() + (event.key === "ArrowRight" ? step : -step)
+                        column.set(Math.min(columnMax(), Math.max(SESSION_COLUMN_WIDTH_MIN, next)))
+                      }}
+                      onResize={(width) => {
+                        // The column is centered, so a width change of W moves its right
+                        // edge by W/2; double the drag delta so the edge tracks the cursor
+                        // 1:1, then re-clamp (the handle clamped with 1:1 math).
+                        const start = columnDragStart ?? columnDisplayWidth()
+                        const next = start + (width - start) * 2
+                        column.set(Math.min(columnMax(), Math.max(SESSION_COLUMN_WIDTH_MIN, next)))
+                      }}
+                    />
+                  </Show>
+                </div>
+              </div>
             </Show>
 
             <Show when={screen.panel.resizable()}>

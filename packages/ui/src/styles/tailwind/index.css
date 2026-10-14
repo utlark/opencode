@@ -96,4 +96,14 @@
   --animate-pulse: var(--animate-pulse);
 }
 
+/* The session column cap is a narrow-window guard, not a universal ceiling: from the 3xl
+   breakpoint (112rem) the default column fills the panel so wide tables, diagrams and code use
+   the available space (#54800). A user-chosen width is set inline on the chat panel and keeps
+   winning over this at every width. */
+@media (min-width: 112rem) {
+  :root {
+    --container-session: 100%;
+  }
+}
+
 @import "./colors.css";

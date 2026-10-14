@@ -27,6 +27,7 @@ import { IncompatibleServerPanel } from "./incompatible-server-panel"
 import { SessionErrorFallback } from "./route-error"
 import { createSessionResolution } from "./session-resolution"
 import { SessionScreenView } from "./screen"
+import { SessionColumnWidthProvider } from "./session-column-width"
 import { PreparingComposer } from "./preparing-composer"
 
 export function TargetSessionRouteContent() {
@@ -175,7 +176,9 @@ function TargetSessionPage() {
     <FileProvider>
       <ComposerPersistenceProvider>
         <CommentsProvider>
-          <SessionPage />
+          <SessionColumnWidthProvider>
+            <SessionPage />
+          </SessionColumnWidthProvider>
         </CommentsProvider>
       </ComposerPersistenceProvider>
     </FileProvider>
